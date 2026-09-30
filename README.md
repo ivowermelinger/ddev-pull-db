@@ -17,10 +17,8 @@ It runs on the host (not inside the DDEV container), from anywhere in the projec
 ```bash
 ddev pull-db PRODUCTION            # saves backups/production-<timestamp>.sql.gz
 ddev pull-db BETA --import         # also snapshots and imports into DDEV
-ddev pull-db BETA --repo org/repo --out dumps
+ddev pull-db BETA --out dumps
 ```
-
-The repository is detected from the git remote. If the project has no git remote, pass `--repo owner/name`.
 
 ## How it works
 

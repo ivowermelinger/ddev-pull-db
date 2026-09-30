@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ## #ddev-generated
 ## Description: Download a database dump from a GitHub environment
-## Usage: pull-db <ENVIRONMENT> [--import] [--repo owner/name] [--out <dir>]
+## Usage: pull-db <ENVIRONMENT> [--import] [--out <dir>]
 ## Example: ddev pull-db PRODUCTION --import
 #
 # Download a gzipped database dump from a GitHub environment's server.
@@ -12,14 +12,13 @@ set -euo pipefail
 
 usage() {
     cat <<'USAGE'
-Usage: ddev pull-db <ENVIRONMENT> [--import] [--repo owner/name] [--out <dir>]
+Usage: ddev pull-db <ENVIRONMENT> [--import] [--out <dir>]
 
 Arguments:
   ENVIRONMENT       GitHub environment name, e.g. BETA or PRODUCTION
 
 Options:
   --import          Snapshot the local DDEV database and import the dump
-  --repo owner/name GitHub repository (default: detected from the git remote)
   --out <dir>       Output directory, relative to the project root (default: backups)
   -h, --help        Show this help
 USAGE
@@ -32,14 +31,12 @@ fail() {
 
 ENVIRONMENT=""
 IMPORT=false
-REPO=""
 OUT_DIR="backups"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help) usage; exit 0 ;;
         --import) IMPORT=true; shift ;;
-        --repo) [[ $# -ge 2 ]] || fail "--repo needs a value"; REPO="$2"; shift 2 ;;
         --out) [[ $# -ge 2 ]] || fail "--out needs a value"; OUT_DIR="$2"; shift 2 ;;
         -*) usage >&2; fail "unknown option: $1" ;;
         *)
@@ -63,16 +60,11 @@ PROJECT_ROOT="${DDEV_APPROOT:-$(git rev-parse --show-toplevel 2>/dev/null)}"
 [[ -n "$PROJECT_ROOT" ]] || fail "could not determine the project root"
 cd "$PROJECT_ROOT"
 
-GH_ARGS=()
-if [[ -n "$REPO" ]]; then
-    GH_ARGS+=(--repo "$REPO")
-fi
-
 # Repository variables first, then environment variables, which override them.
-REPO_VARIABLES="$(gh variable list ${GH_ARGS[@]+"${GH_ARGS[@]}"} --json name,value \
+REPO_VARIABLES="$(gh variable list --json name,value \
     --jq '.[] | "\(.name)=\(.value)"')" \
     || fail "could not read repository variables"
-ENV_VARIABLES="$(gh variable list --env "$ENVIRONMENT" ${GH_ARGS[@]+"${GH_ARGS[@]}"} --json name,value \
+ENV_VARIABLES="$(gh variable list --env "$ENVIRONMENT" --json name,value \
     --jq '.[] | "\(.name)=\(.value)"')" \
     || fail "could not read variables of environment '$ENVIRONMENT'"
 VARIABLES="$REPO_VARIABLES"$'\n'"$ENV_VARIABLES"
