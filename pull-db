@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+#
+# Download a gzipped database dump from a GitHub environment's server.
+# Connection details (SSH_HOST, SSH_USER, SSH_PORT, APP_PATH) are read from the
+# GitHub environment variables via `gh`; authentication uses your local SSH key.
+
+set -euo pipefail
+
+usage() {
+    cat <<'USAGE'
+Usage: pull-db <ENVIRONMENT> [--import] [--repo owner/name] [--out <dir>]
+
+Arguments:
+  ENVIRONMENT       GitHub environment name, e.g. BETA or PRODUCTION
+
+Options:
+  --import          Snapshot the local DDEV database and import the dump
+  --repo owner/name GitHub repository (default: detected from the git remote)
+  --out <dir>       Output directory, relative to the project root (default: backups)
+  -h, --help        Show this help
+USAGE
+}
+
+fail() {
+    echo "Error: $*" >&2
+    exit 1
+}
+
+ENVIRONMENT=""
+IMPORT=false
+REPO=""
+OUT_DIR="backups"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) usage; exit 0 ;;
+        --import) IMPORT=true; shift ;;
+        --repo) [[ $# -ge 2 ]] || fail "--repo needs a value"; REPO="$2"; shift 2 ;;
+        --out) [[ $# -ge 2 ]] || fail "--out needs a value"; OUT_DIR="$2"; shift 2 ;;
+        -*) usage >&2; fail "unknown option: $1" ;;
+        *)
+            [[ -z "$ENVIRONMENT" ]] || { usage >&2; fail "unexpected argument: $1"; }
+            ENVIRONMENT="$1"
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "$ENVIRONMENT" ]]; then
+    usage >&2
+    exit 1
+fi
+
+command -v gh >/dev/null 2>&1 || fail "GitHub CLI (gh) is not installed"
+gh auth status >/dev/null 2>&1 || fail "gh is not logged in, run 'gh auth login'"
+command -v ssh >/dev/null 2>&1 || fail "ssh is not installed"
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || fail "run this from inside the project's git repository"
+cd "$PROJECT_ROOT"
+
+GH_ARGS=()
+if [[ -n "$REPO" ]]; then
+    GH_ARGS+=(--repo "$REPO")
+fi
+
+# Repository variables first, then environment variables, which override them.
+REPO_VARIABLES="$(gh variable list ${GH_ARGS[@]+"${GH_ARGS[@]}"} --json name,value \
+    --jq '.[] | "\(.name)=\(.value)"')" \
+    || fail "could not read repository variables"
+ENV_VARIABLES="$(gh variable list --env "$ENVIRONMENT" ${GH_ARGS[@]+"${GH_ARGS[@]}"} --json name,value \
+    --jq '.[] | "\(.name)=\(.value)"')" \
+    || fail "could not read variables of environment '$ENVIRONMENT'"
+VARIABLES="$REPO_VARIABLES"$'\n'"$ENV_VARIABLES"
+
+get_variable() {
+    printf '%s\n' "$VARIABLES" | grep -E "^$1=" | tail -n1 | cut -d= -f2- || true
+}
+
+SSH_HOST="$(get_variable SSH_HOST)"
+SSH_USER="$(get_variable SSH_USER)"
+SSH_PORT="$(get_variable SSH_PORT)"
+APP_PATH="$(get_variable APP_PATH)"
+
+MISSING=()
+[[ -n "$SSH_HOST" ]] || MISSING+=(SSH_HOST)
+[[ -n "$SSH_USER" ]] || MISSING+=(SSH_USER)
+[[ -n "$SSH_PORT" ]] || MISSING+=(SSH_PORT)
+[[ -n "$APP_PATH" ]] || MISSING+=(APP_PATH)
+if [[ ${#MISSING[@]} -gt 0 ]]; then
+    fail "environment '$ENVIRONMENT' is missing variables: ${MISSING[*]}"
+fi
+
+TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+OUT_FILE="$OUT_DIR/$(printf '%s' "$ENVIRONMENT" | tr '[:upper:]' '[:lower:]')-$TIMESTAMP.sql.gz"
+mkdir -p "$OUT_DIR"
+
+cleanup_on_failure() {
+    rm -f "$OUT_FILE"
+}
+trap cleanup_on_failure ERR INT TERM
+
+echo "Dumping database from $SSH_USER@$SSH_HOST ($ENVIRONMENT)..."
+
+REMOTE_PATH="$(printf '%q' "$APP_PATH")"
+
+ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "bash -s -- $REMOTE_PATH" > "$OUT_FILE" <<'REMOTE'
+set -euo pipefail
+cd "$1"
+
+env_value() {
+    grep -E "^$1=" .env | tail -n1 | cut -d= -f2- | tr -d '\r' \
+        | sed -E "s/^(['\"])(.*)\1\$/\2/"
+}
+
+DB_HOST="$(env_value DB_HOST || true)"
+DB_PORT="$(env_value DB_PORT || true)"
+DB_DATABASE="$(env_value DB_DATABASE)"
+DB_USERNAME="$(env_value DB_USERNAME)"
+DB_PASSWORD="$(env_value DB_PASSWORD || true)"
+
+MYSQL_PWD="$DB_PASSWORD" mysqldump \
+    --single-transaction --quick --no-tablespaces --routines \
+    -h "${DB_HOST:-127.0.0.1}" -P "${DB_PORT:-3306}" -u "$DB_USERNAME" \
+    "$DB_DATABASE" | gzip
+REMOTE
+
+[[ -s "$OUT_FILE" ]] || fail "dump is empty"
+gzip -t "$OUT_FILE" || fail "dump is not a valid gzip file"
+
+trap - ERR INT TERM
+echo "Saved $OUT_FILE ($(du -h "$OUT_FILE" | cut -f1))"
+
+if [[ "$IMPORT" == true ]]; then
+    [[ -d .ddev ]] || fail "--import is only supported in DDEV projects"
+    echo "Creating DDEV snapshot pre-pull-$TIMESTAMP..."
+    ddev snapshot --name "pre-pull-$TIMESTAMP"
+    echo "Importing into DDEV..."
+    ddev import-db --file="$OUT_FILE"
+fi
