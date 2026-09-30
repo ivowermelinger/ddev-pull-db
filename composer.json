@@ -1,0 +1,10 @@
+{
+    "name": "ivowermelinger/laravel-db-pull",
+    "description": "Download a database dump from a GitHub environment's server, using the environment variables and your local SSH key.",
+    "type": "library",
+    "license": "MIT",
+    "require": {},
+    "bin": [
+        "pull-db"
+    ]
+}
