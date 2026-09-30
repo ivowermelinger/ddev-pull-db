@@ -1,25 +1,24 @@
 #!/usr/bin/env bash
 ## #ddev-generated
-## Description: Download a database dump from a GitHub environment
-## Usage: pull-db <ENVIRONMENT> [--import] [--out <dir>]
-## Example: ddev pull-db PRODUCTION --import
+## Description: Import the database of a GitHub environment into DDEV
+## Usage: pull-db <ENVIRONMENT>
+## Example: ddev pull-db PRODUCTION
 #
-# Download a gzipped database dump from a GitHub environment's server.
-# Connection details (SSH_HOST, SSH_USER, SSH_PORT, APP_PATH) are read from the
-# GitHub environment variables via `gh`; authentication uses your local SSH key.
+# Stream a database dump from a GitHub environment's server into the local DDEV
+# database. Connection details (SSH_HOST, SSH_USER, SSH_PORT, APP_PATH) are read
+# from the GitHub environment variables via `gh`; authentication uses your local
+# SSH key. A DDEV snapshot is taken first, and no dump file is written.
 
 set -euo pipefail
 
 usage() {
     cat <<'USAGE'
-Usage: ddev pull-db <ENVIRONMENT> [--import] [--out <dir>]
+Usage: ddev pull-db <ENVIRONMENT>
 
 Arguments:
   ENVIRONMENT       GitHub environment name, e.g. BETA or PRODUCTION
 
 Options:
-  --import          Snapshot the local DDEV database and import the dump
-  --out <dir>       Output directory, relative to the project root (default: backups)
   -h, --help        Show this help
 USAGE
 }
@@ -30,14 +29,10 @@ fail() {
 }
 
 ENVIRONMENT=""
-IMPORT=false
-OUT_DIR="backups"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help) usage; exit 0 ;;
-        --import) IMPORT=true; shift ;;
-        --out) [[ $# -ge 2 ]] || fail "--out needs a value"; OUT_DIR="$2"; shift 2 ;;
         -*) usage >&2; fail "unknown option: $1" ;;
         *)
             [[ -z "$ENVIRONMENT" ]] || { usage >&2; fail "unexpected argument: $1"; }
@@ -59,6 +54,7 @@ command -v ssh >/dev/null 2>&1 || fail "ssh is not installed"
 PROJECT_ROOT="${DDEV_APPROOT:-$(git rev-parse --show-toplevel 2>/dev/null)}"
 [[ -n "$PROJECT_ROOT" ]] || fail "could not determine the project root"
 cd "$PROJECT_ROOT"
+[[ -d .ddev ]] || fail "no .ddev directory found in $PROJECT_ROOT"
 
 # Repository variables first, then environment variables, which override them.
 REPO_VARIABLES="$(gh variable list --json name,value \
@@ -87,20 +83,15 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
     fail "environment '$ENVIRONMENT' is missing variables: ${MISSING[*]}"
 fi
 
-TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
-OUT_FILE="$OUT_DIR/$(printf '%s' "$ENVIRONMENT" | tr '[:upper:]' '[:lower:]')-$TIMESTAMP.sql.gz"
-mkdir -p "$OUT_DIR"
+SNAPSHOT="pre-pull-$(date +%Y%m%d-%H%M%S)"
+echo "Creating DDEV snapshot $SNAPSHOT..."
+ddev snapshot --name "$SNAPSHOT"
 
-cleanup_on_failure() {
-    rm -f "$OUT_FILE"
-}
-trap cleanup_on_failure ERR INT TERM
-
-echo "Dumping database from $SSH_USER@$SSH_HOST ($ENVIRONMENT)..."
+echo "Importing database from $SSH_USER@$SSH_HOST ($ENVIRONMENT)..."
 
 REMOTE_PATH="$(printf '%q' "$APP_PATH")"
 
-ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "bash -s -- $REMOTE_PATH" > "$OUT_FILE" <<'REMOTE'
+ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "bash -s -- $REMOTE_PATH" <<'REMOTE' | gunzip | ddev import-db || fail "import failed, restore with: ddev snapshot restore $SNAPSHOT"
 set -euo pipefail
 cd "$1"
 
@@ -121,16 +112,4 @@ MYSQL_PWD="$DB_PASSWORD" mysqldump \
     "$DB_DATABASE" | gzip
 REMOTE
 
-[[ -s "$OUT_FILE" ]] || fail "dump is empty"
-gzip -t "$OUT_FILE" || fail "dump is not a valid gzip file"
-
-trap - ERR INT TERM
-echo "Saved $OUT_FILE ($(du -h "$OUT_FILE" | cut -f1))"
-
-if [[ "$IMPORT" == true ]]; then
-    [[ -d .ddev ]] || fail "--import is only supported in DDEV projects"
-    echo "Creating DDEV snapshot pre-pull-$TIMESTAMP..."
-    ddev snapshot --name "pre-pull-$TIMESTAMP"
-    echo "Importing into DDEV..."
-    ddev import-db --file="$OUT_FILE"
-fi
+echo "Imported the $ENVIRONMENT database (snapshot: $SNAPSHOT)"
