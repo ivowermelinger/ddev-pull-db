@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+## #ddev-generated
+## Description: Download a database dump from a GitHub environment
+## Usage: pull-db <ENVIRONMENT> [--import] [--repo owner/name] [--out <dir>]
+## Example: ddev pull-db PRODUCTION --import
 #
 # Download a gzipped database dump from a GitHub environment's server.
 # Connection details (SSH_HOST, SSH_USER, SSH_PORT, APP_PATH) are read from the
@@ -8,7 +12,7 @@ set -euo pipefail
 
 usage() {
     cat <<'USAGE'
-Usage: pull-db <ENVIRONMENT> [--import] [--repo owner/name] [--out <dir>]
+Usage: ddev pull-db <ENVIRONMENT> [--import] [--repo owner/name] [--out <dir>]
 
 Arguments:
   ENVIRONMENT       GitHub environment name, e.g. BETA or PRODUCTION
@@ -55,7 +59,8 @@ command -v gh >/dev/null 2>&1 || fail "GitHub CLI (gh) is not installed"
 gh auth status >/dev/null 2>&1 || fail "gh is not logged in, run 'gh auth login'"
 command -v ssh >/dev/null 2>&1 || fail "ssh is not installed"
 
-PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || fail "run this from inside the project's git repository"
+PROJECT_ROOT="${DDEV_APPROOT:-$(git rev-parse --show-toplevel 2>/dev/null)}"
+[[ -n "$PROJECT_ROOT" ]] || fail "could not determine the project root"
 cd "$PROJECT_ROOT"
 
 GH_ARGS=()

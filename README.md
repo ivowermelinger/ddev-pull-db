@@ -1,22 +1,26 @@
-# laravel-db-pull
+# ddev-pull-db
 
 Download a gzipped database dump from a server, using the variables of a GitHub environment. It runs on your machine and authenticates with your own SSH key. Nothing goes through GitHub Actions.
 
 ## Install
 
 ```bash
-composer require --dev ivowermelinger/laravel-db-pull
+ddev add-on get ivowermelinger/ddev-pull-db
 ```
+
+Commit `.ddev/commands/host/pull-db` so your team gets the command. To update, run `ddev add-on get` again. To remove, run `ddev add-on remove pull-db`.
 
 ## Usage
 
-Run on the host (not inside the DDEV container), from anywhere in the project:
+It runs on the host (not inside the DDEV container), from anywhere in the project:
 
 ```bash
-vendor/bin/pull-db PRODUCTION            # saves backups/production-<timestamp>.sql.gz
-vendor/bin/pull-db BETA --import         # also snapshots and imports into DDEV
-vendor/bin/pull-db BETA --repo org/repo --out dumps
+ddev pull-db PRODUCTION            # saves backups/production-<timestamp>.sql.gz
+ddev pull-db BETA --import         # also snapshots and imports into DDEV
+ddev pull-db BETA --repo org/repo --out dumps
 ```
+
+The repository is detected from the git remote. If the project has no git remote, pass `--repo owner/name`.
 
 ## How it works
 
@@ -26,6 +30,7 @@ vendor/bin/pull-db BETA --repo org/repo --out dumps
 
 ## Requirements
 
+- DDEV v1.24 or newer
 - [GitHub CLI](https://cli.github.com) (`gh`), logged in, with access to the repository's environment variables
 - An SSH key authorized on the server
 - `mysqldump` on the server, and MySQL/MariaDB credentials in the server's `.env`

@@ -1,0 +1,4 @@
+name: pull-db
+project_files:
+  - commands/host/pull-db
+ddev_version_constraint: '>= v1.24.0'
